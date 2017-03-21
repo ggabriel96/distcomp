@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Server of a distributed chat app",
   "scripts": {
-    "start": "node server.js"
+    "start": "tsc server.ts && node server.js"
   },
   "repository": {
     "type": "git",
@@ -17,5 +17,8 @@
   "homepage": "https://github.com/ggabriel96/distcomp#readme",
   "dependencies": {
     "express": "^4.15.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.0.35"
   }
 }
