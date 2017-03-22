@@ -16,6 +16,8 @@
   },
   "homepage": "https://github.com/ggabriel96/distcomp#readme",
   "dependencies": {
+    "@types/body-parser": "^1.16.1",
+    "body-parser": "^1.17.1",
     "express": "^4.15.2"
   },
   "devDependencies": {
