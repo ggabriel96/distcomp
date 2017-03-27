@@ -1,25 +1,32 @@
 import { Message } from "./Message";
 
-import ip = require('ip');
+import ip = require("ip");
 import express = require("express");
 import winston = require("winston");
+import minimist = require("minimist");
 import bodyParser = require("body-parser");
 
-const port: Number = 1975;
+const defaultPort: Number = 1975;
 const ipAddress: string = ip.address();
 const app: express.Application = express();
+const argv = minimist(process.argv.slice(2));
 const logger: winston.LoggerInstance = new winston.Logger({
   transports: [
-      new winston.transports.Console({
-        level: 'silly'
-      })
+    new winston.transports.Console({
+      level: 'silly'
+    })
   ]
 });
 
 let messages: Message[] = [];
+let port: Number = argv.port || argv.p;
+if (port === undefined) {
+  port = defaultPort;
+  logger.info("No port argument provided, using default.");
+}
 
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({extended: true}));
+app.use(bodyParser.urlencoded({ extended: true }));
 
 app.post("/messages", (request: express.Request, response: express.Response): void => {
   let message: Message = new Message(request.body.user, request.body.content);

@@ -19,12 +19,14 @@
     "body-parser": "^1.17.1",
     "express": "^4.15.2",
     "ip": "^1.1.5",
+    "minimist": "^1.2.0",
     "winston": "^2.3.1"
   },
   "devDependencies": {
     "@types/body-parser": "^1.16.1",
     "@types/express": "^4.0.35",
     "@types/ip": "0.0.29",
+    "@types/minimist": "^1.2.0",
     "@types/winston": "^2.3.0"
   }
 }
