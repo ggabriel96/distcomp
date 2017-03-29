@@ -1,5 +1,5 @@
 export class Stringified {
-    toString() {
-        return JSON.stringify(this);
-    }
+  toString() {
+    return JSON.stringify(this);
+  }
 }

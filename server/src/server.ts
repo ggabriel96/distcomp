@@ -1,10 +1,10 @@
-import { Message } from "./Message";
+import { Message } from "./Classes";
 
-import ip = require("ip");
-import express = require("express");
-import winston = require("winston");
-import minimist = require("minimist");
-import bodyParser = require("body-parser");
+import * as ip from "ip";
+import * as express from "express";
+import * as winston from "winston";
+import * as minimist from "minimist";
+import * as bodyParser from "body-parser";
 
 const defaultPort: Number = 1975;
 const ipAddress: string = ip.address();
@@ -19,6 +19,7 @@ const logger: winston.LoggerInstance = new winston.Logger({
 });
 
 let messages: Message[] = [];
+let servers: Set<Number> = new Set();
 let port: Number = argv.port || argv.p;
 if (port === undefined) {
   port = defaultPort;
