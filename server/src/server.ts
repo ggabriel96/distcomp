@@ -1,4 +1,4 @@
-import { Message } from "./Classes";
+import { Message, PingState } from "./Classes";
 
 import * as ip from "ip";
 import * as express from "express";
@@ -24,10 +24,14 @@ const logger: winston.LoggerInstance = new winston.Logger({
 
 let messages: Message[] = [];
 let aliveServers: Set<string> = new Set();
+let pingState: PingState = PingState.IDLE;
 
-let port: number = argv.port || argv.p;
-let timeout: number = argv.timeout || argv.t;
-let servers: string[] = argv.server || argv.s;
+let port: number | undefined = argv.port || argv.p;
+let timeout: number | undefined = argv.timeout || argv.t;
+let servers: string | string[] | undefined = argv.server || argv.s;
+
+logger.debug("Provided command-line arguments:");
+logger.debug(JSON.stringify(argv));
 
 if (port === undefined) {
   port = defaultPort;
@@ -58,58 +62,112 @@ app.get("/messages", (request: express.Request, response: express.Response): voi
   response.send(messages);
 });
 
+app.post("/ping", (request: express.Request, response: express.Response): void => {
+  let address = "http://" + request.hostname + ":" + request.header("port");
+  logger.debug("Received ping from '" + address + "'. Adding it to known alive servers...");
+  aliveServers.add(address);
+  response.send();
+});
+
 app.get("/", (request: express.Request, response: express.Response): void => {
   response.send("Hello, world!");
 });
 
-app.listen(port, () => {
+app.listen(port, (): void => {
   logger.info("Server listening on http://" + ipAddress + ":" + port);
+  if (servers !== undefined) addAll(servers);
 });
 
-if (servers !== undefined) checkAlive(servers);
-// setInterval(checkServers, timeout);
+setInterval(pingAlive, timeout);
 
-function checkServers() {
-  // convert Set to [] in a thread
-  // then call checkAlive
+function pingAlive() {
+  if (pingState !== PingState.IDLE) return;
+  if (aliveServers === undefined || aliveServers.size === 0) {
+    logger.debug("No known alive servers, returning...");
+    return;
+  }
+  logger.debug("Starting pingAlive process...");
+  printAliveServers();
+  pingState = PingState.INIT;
+  let params = {
+    "servers": aliveServers
+  };
+  hamsters.run(params, (): void => {
+    rtn.data = Array.from(params.servers);
+  }, (output: any): void => {
+    ping(output[0]);
+  }, threads, false);
 }
 
-function checkAlive(servers: string[]) {
+function ping(servers: string[]): void {
+  if (pingState === PingState.BUSY) return;
+  if (servers === undefined || servers.length === 0) return;
+  logger.debug("Starting ping process...");
+  pingState = PingState.BUSY;
   let params = {
     "servers": servers
   };
-  hamsters.run(params, () => {
-    let servers: string[] = fixAddresses(params.servers);
+  hamsters.run(params, (): void => {
+    let servers: string[] = params.servers;
+    let options: request.OptionsWithUrl = {
+      url: "",
+      json: true,
+      headers: {
+        "port": port
+      }
+    };
     for (let i = 0; i < servers.length; i++) {
-      console.log(servers[i]);
-      request(servers[i], (error, response, body) => {
-        if (error === null) {
-          aliveServers.add(servers[i]);
-          // aliveServers.add(response); // servers[i] known alive servers
-        } else {
-          // log it
+      options.url = servers[i] + "/ping";
+      logger.debug("Ping sent to '" + options.url + "'...");
+      request.post(options, (error, response, body) => {
+        if (error !== null || response.statusCode !== 200) {
+          logger.error(error);
+          if (response !== undefined) logger.error(JSON.stringify(response));
+          logger.error("Removing '" + servers[i] + "' from known alive servers...");
+          aliveServers.delete(servers[i]);
         }
       });
     }
-  }, (output) => {
+  }, (output: any): void => {
+    pingState = PingState.IDLE;
+    logger.debug("Done pinging.");
   }, threads, false);
 }
 
 function fixAddresses(servers: string[]): string[] {
-  let fixedServer: string;
   let fixedServers: string[] = [];
-  const portRegExp: RegExp = new RegExp("\\:\\d+");
   for (let i = 0; i < servers.length; i++) {
-    fixedServer = servers[i];
-    if (servers[i].search(portRegExp) === -1) {
-      logger.warn("No port specified for server '" + servers[i] + "', using the default of " + defaultPort + ".");
-      fixedServer += ":" + defaultPort;
-    }
-    if (!servers[i].startsWith("http://")) {
-      logger.warn("No protocol specified for server '" + servers[i] + "', using http.");
-      fixedServer = "http://" + fixedServer;
-    }
-    fixedServers.push(fixedServer);
+    fixedServers.push(fixAddress(servers[i]));
   }
   return fixedServers;
+}
+
+function fixAddress(address: string): string {
+  let fixedAddress: string = address;
+  const portRegExp: RegExp = new RegExp("\\:\\d+");
+  logger.debug("fixAddress(" + address + ")");
+  if (!address.startsWith("http://")) {
+    logger.debug("Prepending 'http://' to server address '" + address + "'.");
+    fixedAddress = "http://" + fixedAddress;
+  }
+  if (address.search(portRegExp) === -1) {
+    logger.debug("No port specified for address '" + address + "', using the default of " + defaultPort + ".");
+    fixedAddress += ":" + defaultPort;
+  }
+  return fixedAddress;
+}
+
+function printAliveServers(): void {
+  logger.debug("Current known alive servers:");
+  for (let server of aliveServers) logger.debug(server);
+}
+
+function addAll(servers: string | string[]): void {
+  logger.debug("addAll(" + JSON.stringify(servers) + ")");
+  if (typeof servers === "string") servers = [servers];
+  for (let i = 0; i < servers.length; i++) {
+    let server: string = fixAddress(servers[i]);
+    logger.debug("Adding '" + server + "' to known alive servers...");
+    aliveServers.add(server);
+  }
 }

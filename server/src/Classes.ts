@@ -18,3 +18,7 @@ export class Message extends Stringified {
     return typeof field !== "undefined" && field !== null && field.length > 0;
   }
 }
+
+export enum PingState {
+  IDLE, INIT, BUSY
+}
