@@ -46,19 +46,14 @@ if (timeout === undefined) {
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-app.post("/messages", (request: express.Request, response: express.Response): void => {
-  let message: Message = new Message(request.body.user, request.body.content);
-  if (message.isValid()) {
-    logger.debug("Received message " + message);
-    messages.push(message);
-    response.send(message);
-  } else {
-    logger.debug("Received invalid message " + message)
-    response.send();
-  }
+app.post("/message/incoming", receiveMessage);
+
+app.post("/message/new", (request: express.Request, response: express.Response): void => {
+  receiveMessage(request, response);
+  // spreadMessage();
 });
 
-app.get("/messages", (request: express.Request, response: express.Response): void => {
+app.get("/message/list", (request: express.Request, response: express.Response): void => {
   response.send(messages);
 });
 
@@ -79,6 +74,18 @@ app.listen(port, (): void => {
 });
 
 setInterval(pingAlive, timeout);
+
+function receiveMessage(request: express.Request, response: express.Response): void {
+  let message: Message = new Message(request.body.user, request.body.content);
+  if (message.isValid()) {
+    logger.debug("Received message " + message);
+    messages.push(message);
+    response.send(message);
+  } else {
+    logger.debug("Received invalid message " + message)
+    response.send();
+  }
+}
 
 function pingAlive() {
   if (pingState !== PingState.IDLE) return;

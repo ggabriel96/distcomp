@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Server of a distributed chat app",
   "scripts": {
-    "start": "tsc && node build/server.js"
+    "start": "tsc; node build/server.js"
   },
   "repository": {
     "type": "git",
