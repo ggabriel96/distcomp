@@ -1,0 +1,19 @@
+{
+  "name": "distcomp",
+  "version": "1.0.0",
+  "description": "Distributed Computing assignments",
+  "scripts": {
+    "server": "cd server && npm start",
+    "client": "cd client && npm start"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ggabriel96/distcomp.git"
+  },
+  "author": "Gabriel Galli",
+  "license": "Unlicense",
+  "bugs": {
+    "url": "https://github.com/ggabriel96/distcomp/issues"
+  },
+  "homepage": "https://github.com/ggabriel96/distcomp#readme"
+}
