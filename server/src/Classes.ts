@@ -19,6 +19,6 @@ export class Message extends Stringified {
   }
 }
 
-export enum MessagingState {
+export enum RequestState {
   IDLE, INIT, BUSY
 }

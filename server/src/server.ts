@@ -1,4 +1,4 @@
-import { Message, MessagingState } from "./Classes";
+import { Message, RequestState } from "./Classes";
 
 import * as ip from "ip";
 import * as express from "express";
@@ -24,8 +24,6 @@ const logger: winston.LoggerInstance = new winston.Logger({
 
 let messages: Message[] = [];
 let aliveServers: Set<string> = new Set();
-let pingState: MessagingState = MessagingState.IDLE;
-let spreadState: MessagingState = MessagingState.IDLE;
 
 let port: number | undefined = argv.port || argv.p;
 let timeout: number | undefined = argv.timeout || argv.t;
@@ -44,14 +42,30 @@ if (timeout === undefined) {
   logger.info("No timeout argument provided, using the default of " + defaultTimeout + ".");
 }
 
+let pingState: RequestState = RequestState.IDLE;
+let pingOptions: request.OptionsWithUrl = {
+  url: "/ping",
+  method: "POST",
+  json: true,
+  headers: {
+    "port": port
+  }
+};
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 app.post("/message/incoming", receiveMessage);
 
 app.post("/message/new", (request: express.Request, response: express.Response): void => {
-  receiveMessage(request, response);
-  // messageAlive(spreadState, spreadMessage);
+  let message: Message = new Message(request.body.user, request.body.content);
+  try {
+    receiveMessage(message);
+    response.send(message);
+  } catch (e) {
+    logger.error(e.toString());
+    response.send(e.toString());
+  }
 });
 
 app.get("/message/list", (request: express.Request, response: express.Response): void => {
@@ -74,91 +88,82 @@ app.listen(port, (): void => {
   if (servers !== undefined) addAll(servers);
 });
 
-setInterval(messageAlive, timeout, pingState, ping);
+setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
 
-function receiveMessage(request: express.Request, response: express.Response): void {
-  let message: Message = new Message(request.body.user, request.body.content);
-  if (message.isValid()) {
-    logger.debug("Message received: " + message);
-    messages.push(message);
-    response.send(message);
-  } else {
-    logger.debug("Invalid message received: " + message)
-    response.send();
-  }
-}
-
-function messageAlive(state: MessagingState, action: (servers: string[]) => void, ...args: any[]): void {
-  if (state !== MessagingState.IDLE) {
-    logger.warn("messageAlive called with a state that's not IDLE, returning...");
+function messageAlive(options: request.OptionsWithUrl, state?: RequestState, onError?: (error: any, response: request.RequestResponse, body: any) => void): void {
+  if (state !== undefined && state !== RequestState.IDLE) {
+    logger.warn("requestAlive called with a state that's not IDLE, returning...");
     return;
   }
   if (aliveServers === undefined || aliveServers.size === 0) {
     logger.debug("No known alive servers, returning...");
     return;
   }
-  logger.debug("Starting messageAlive process...");
+  logger.debug("Starting requestAlive process...");
   printAliveServers();
-  state = MessagingState.INIT;
+  if (state !== undefined) state = RequestState.INIT;
   let params = {
     "servers": aliveServers
   };
   hamsters.run(params, (): void => {
     rtn.data = Array.from(params.servers);
   }, (output: any): void => {
-    action.call(action, output[0]);
+    doRequest(options, output[0], state, onError);
   }, threads, false);
 }
 
-/**
- * @todo update this function to accomodate any spreading request
- */
-function ping(servers: string[]): void {
-  if (pingState === MessagingState.BUSY) {
-    logger.warn("ping called with a BUSY state, returning...");
+function doRequest(options: request.OptionsWithUrl, servers: string[], state?: RequestState, onError?: (error: any, response: request.RequestResponse, body: any) => void): void {
+  if (state !== undefined && state === RequestState.BUSY) {
+    logger.warn("doRequest called with a BUSY state, returning...");
     return;
   }
   if (servers === undefined || servers.length === 0) {
-    logger.warn("ping called with undefined or empty servers array, returning...");
+    logger.warn("doRequest called with undefined or empty servers array, returning...");
     return;
   }
-  logger.debug("Starting ping process...");
-  pingState = MessagingState.BUSY;
+  logger.debug("Starting doRequest process...");
+  if (state !== undefined) state = RequestState.BUSY;
   let params = {
     "servers": servers
   };
   hamsters.run(params, (): void => {
     let servers: string[] = params.servers;
-    let options: request.OptionsWithUrl = {
-      url: "",
-      json: true,
-      headers: {
-        "port": port
-      }
-    };
     for (let i = 0; i < servers.length; i++) {
-      options.url = servers[i] + "/ping";
-      logger.debug("Ping sent to '" + options.url + "'...");
-      request.post(options, (error, response, body) => {
+      options.baseUrl = servers[i];
+      logger.debug("Sending request with options: " + JSON.stringify(options));
+      request(options, (error: any, response: request.RequestResponse, body: any) => {
         if (error !== null || response.statusCode !== 200) {
           logger.error(error);
           if (response !== undefined) logger.error(JSON.stringify(response));
-          logger.error("Removing '" + servers[i] + "' from known alive servers...");
-          aliveServers.delete(servers[i]);
+          if (onError !== undefined) onError.call(onError, error, response, body);
         }
       });
     }
   }, (output: any): void => {
-    pingState = MessagingState.IDLE;
-    logger.debug("Done pinging.");
+    state = RequestState.IDLE;
+    logger.debug("Stopping doRequest process...");
   }, threads, false);
+}
+
+function receiveMessage(message: Message): void {
+  if (message.isValid()) {
+    logger.debug("Received message: " + message);
+    messages.push(message);
+  } else {
+    throw new TypeError("Invalid message: " + message);
+  }
+}
+
+function removeFromAlive(error: any, response: request.RequestResponse, body: any): void {
+  let server: string = "http://" + error.address + ":" + error.port;
+  logger.error("Removing '" + server + "' from known alive servers...");
+  aliveServers.delete(server);
 }
 
 function fixAddresses(servers: string[]): string[] {
   let fixedServers: string[] = [];
-  for (let i = 0; i < servers.length; i++) {
+  for (let i = 0; i < servers.length; i++)
     fixedServers.push(fixAddress(servers[i]));
-  }
   return fixedServers;
 }
 
