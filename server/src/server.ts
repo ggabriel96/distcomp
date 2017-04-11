@@ -1,4 +1,4 @@
-import { Message, PingState } from "./Classes";
+import { Message, MessagingState } from "./Classes";
 
 import * as ip from "ip";
 import * as express from "express";
@@ -24,7 +24,8 @@ const logger: winston.LoggerInstance = new winston.Logger({
 
 let messages: Message[] = [];
 let aliveServers: Set<string> = new Set();
-let pingState: PingState = PingState.IDLE;
+let pingState: MessagingState = MessagingState.IDLE;
+let spreadState: MessagingState = MessagingState.IDLE;
 
 let port: number | undefined = argv.port || argv.p;
 let timeout: number | undefined = argv.timeout || argv.t;
@@ -50,7 +51,7 @@ app.post("/message/incoming", receiveMessage);
 
 app.post("/message/new", (request: express.Request, response: express.Response): void => {
   receiveMessage(request, response);
-  // spreadMessage();
+  // messageAlive(spreadState, spreadMessage);
 });
 
 app.get("/message/list", (request: express.Request, response: express.Response): void => {
@@ -73,44 +74,56 @@ app.listen(port, (): void => {
   if (servers !== undefined) addAll(servers);
 });
 
-setInterval(pingAlive, timeout);
+setInterval(messageAlive, timeout, pingState, ping);
 
 function receiveMessage(request: express.Request, response: express.Response): void {
   let message: Message = new Message(request.body.user, request.body.content);
   if (message.isValid()) {
-    logger.debug("Received message " + message);
+    logger.debug("Message received: " + message);
     messages.push(message);
     response.send(message);
   } else {
-    logger.debug("Received invalid message " + message)
+    logger.debug("Invalid message received: " + message)
     response.send();
   }
 }
 
-function pingAlive() {
-  if (pingState !== PingState.IDLE) return;
+function messageAlive(state: MessagingState, action: (servers: string[]) => void, ...args: any[]): void {
+  if (state !== MessagingState.IDLE) {
+    logger.warn("messageAlive called with a state that's not IDLE, returning...");
+    return;
+  }
   if (aliveServers === undefined || aliveServers.size === 0) {
     logger.debug("No known alive servers, returning...");
     return;
   }
-  logger.debug("Starting pingAlive process...");
+  logger.debug("Starting messageAlive process...");
   printAliveServers();
-  pingState = PingState.INIT;
+  state = MessagingState.INIT;
   let params = {
     "servers": aliveServers
   };
   hamsters.run(params, (): void => {
     rtn.data = Array.from(params.servers);
   }, (output: any): void => {
-    ping(output[0]);
+    action.call(action, output[0]);
   }, threads, false);
 }
 
+/**
+ * @todo update this function to accomodate any spreading request
+ */
 function ping(servers: string[]): void {
-  if (pingState === PingState.BUSY) return;
-  if (servers === undefined || servers.length === 0) return;
+  if (pingState === MessagingState.BUSY) {
+    logger.warn("ping called with a BUSY state, returning...");
+    return;
+  }
+  if (servers === undefined || servers.length === 0) {
+    logger.warn("ping called with undefined or empty servers array, returning...");
+    return;
+  }
   logger.debug("Starting ping process...");
-  pingState = PingState.BUSY;
+  pingState = MessagingState.BUSY;
   let params = {
     "servers": servers
   };
@@ -136,7 +149,7 @@ function ping(servers: string[]): void {
       });
     }
   }, (output: any): void => {
-    pingState = PingState.IDLE;
+    pingState = MessagingState.IDLE;
     logger.debug("Done pinging.");
   }, threads, false);
 }
