@@ -48,11 +48,11 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 app.post("/message/incoming", (request: express.Request, response: express.Response): void => {
-  receiveMessage(request, response, false);
+  receiveClientMessage(request, response, false);
 });
 
 app.post("/message/new", (request: express.Request, response: express.Response): void => {
-  receiveMessage(request, response, true);
+  receiveClientMessage(request, response, true);
 });
 
 app.get("/message/list", (request: express.Request, response: express.Response): void => {
@@ -72,12 +72,18 @@ app.get("/", (request: express.Request, response: express.Response): void => {
 
 app.listen(port, (): void => {
   logger.info("Server listening on http://" + ipAddress + ":" + port + " with a threading timer of " + timeout + " ms.");
-  if (servers !== undefined) addAll(servers);
+  if (servers !== undefined) {
+    addAll(servers);
+    syncMessages();
+  }
 });
 
 setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
 
-function messageAlive(options: request.OptionsWithUrl, state?: RequestState, onError?: (error: any, response: request.RequestResponse, body: any) => void): void {
+function messageAlive(options: request.OptionsWithUrl,
+  state?: RequestState,
+  onError?: (error: any, response: request.RequestResponse, body: any) => boolean,
+  onSuccess?: (error: any, response: request.RequestResponse, body: any) => boolean): void {
   if (state !== undefined && state !== RequestState.IDLE) {
     logger.warn("messageAlive called with a state that's not IDLE, returning...");
     return;
@@ -87,19 +93,29 @@ function messageAlive(options: request.OptionsWithUrl, state?: RequestState, onE
     return;
   }
   logger.debug("Starting messageAlive process...");
-  printAliveServers();
   if (state !== undefined) state = RequestState.INIT;
   let params = {
     "servers": aliveServers
   };
   hamsters.run(params, (): void => {
     rtn.data = Array.from(params.servers);
+    logger.debug("Current known alive servers: " + rtn.data);
   }, (output: any): void => {
-    doRequest(options, output[0], state, onError);
+    doRequest(options, output[0], state, onError, onSuccess);
   }, threads, false);
 }
 
-function doRequest(options: request.OptionsWithUrl, servers: string[], state?: RequestState, onError?: (error: any, response: request.RequestResponse, body: any) => void): void {
+/**
+ * @todo rename onError and onSuccess callbacks to something that relates to an
+ * error on a single iteration of the loop
+ * @todo add another callback that will be called at the end of the thread run
+ * (before going back to IDLE state)
+ */
+function doRequest(options: request.OptionsWithUrl,
+  servers: string[],
+  state?: RequestState,
+  onError?: (error: any, response: request.RequestResponse, body: any) => boolean,
+  onSuccess?: (error: any, response: request.RequestResponse, body: any) => boolean): void {
   if (state !== undefined && state === RequestState.BUSY) {
     logger.warn("doRequest called with a BUSY state, returning...");
     return;
@@ -114,27 +130,30 @@ function doRequest(options: request.OptionsWithUrl, servers: string[], state?: R
     "servers": servers
   };
   hamsters.run(params, (): void => {
+    let advance: boolean = true;
     let servers: string[] = params.servers;
-    for (let i = 0; i < servers.length; i++) {
+    for (let i = 0; advance && i < servers.length; i++) {
       options.baseUrl = servers[i];
       logger.debug("Sending request with options: " + JSON.stringify(options));
       request(options, (error: any, response: request.RequestResponse, body: any) => {
         if (error !== null || response.statusCode !== 200) {
           logger.error(error);
           if (response !== undefined) logger.error(JSON.stringify(response));
-          if (onError !== undefined) onError.call(onError, error, response, body);
+          if (onError !== undefined) advance = onError.call(onError, error, response, body);
+        } else if (onSuccess !== undefined) {
+          advance = onSuccess.call(onSuccess, error, response, body);
         }
       });
     }
   }, (output: any): void => {
-    state = RequestState.IDLE;
+    if (state !== undefined) state = RequestState.IDLE;
     logger.debug("Stopping doRequest process...");
   }, threads, false);
 }
 
-function receiveMessage(request: express.Request, response: express.Response, shouldSpread: boolean): void {
+function receiveClientMessage(request: express.Request, response: express.Response, shouldSpread: boolean): void {
   try {
-    let message: Message = doReceive(request);
+    let message: Message = receiveMessage(request.body);
     if (shouldSpread) spreadNewMessage(message);
     response.send(true);
   } catch (e) {
@@ -143,15 +162,11 @@ function receiveMessage(request: express.Request, response: express.Response, sh
   }
 }
 
-function doReceive(request: express.Request): Message {
-  let message: Message = parseMessage(request);
+function receiveMessage(json: any): Message {
+  let message: Message = new Message(json.user, json.content);
   logger.debug("Received message: " + message);
   messages.push(message);
   return message;
-}
-
-function parseMessage(request: express.Request): Message {
-  return new Message(request.body.user, request.body.content);
 }
 
 function spreadNewMessage(message: Message): void {
@@ -168,10 +183,11 @@ function spreadNewMessage(message: Message): void {
   messageAlive(messageOptions);
 }
 
-function removeFromAlive(error: any, response: request.RequestResponse, body: any): void {
+function removeFromAlive(error: any, response: request.RequestResponse, body: any): boolean {
   let server: string = "http://" + error.address + ":" + error.port;
   logger.error("Removing '" + server + "' from known alive servers...");
   aliveServers.delete(server);
+  return true;
 }
 
 function fixAddresses(servers: string[]): string[] {
@@ -196,11 +212,6 @@ function fixAddress(address: string): string {
   return fixedAddress;
 }
 
-function printAliveServers(): void {
-  logger.debug("Current known alive servers:");
-  for (let server of aliveServers) logger.debug(server);
-}
-
 function addAll(servers: string | string[]): void {
   logger.debug("addAll(" + JSON.stringify(servers) + ")");
   if (typeof servers === "string") servers = [servers];
@@ -209,4 +220,30 @@ function addAll(servers: string | string[]): void {
     logger.debug("Adding '" + server + "' to known alive servers...");
     aliveServers.add(server);
   }
+}
+
+function syncMessages(): void {
+  logger.debug("Preparing to sync messages...");
+  let syncOptions: request.OptionsWithUrl = {
+    "url": "/message/list",
+    "method": "GET",
+    "json": true,
+    "headers": {
+      "port": port
+    }
+  };
+  messageAlive(syncOptions, undefined, undefined, (error: any, response: request.RequestResponse, body: any): boolean => {
+    try {
+      for (let i = 0; i < body.length; i++) receiveMessage(body[i]);
+    } catch (e) {
+      /**
+       * Does not make a lot of sense now, but it's a "try again" placeholder.
+       * An error should never happen here, because servers only hold valid
+       * messages, but it's preferable to have it not crash anyways...
+       */
+      logger.error(e.toString());
+      return true;
+    }
+    return false;
+  });
 }
