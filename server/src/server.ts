@@ -29,25 +29,17 @@ let port: number | undefined = argv.port || argv.p;
 let timeout: number | undefined = argv.timeout || argv.t;
 let servers: string | string[] | undefined = argv.server || argv.s;
 
-logger.debug("Provided command-line arguments:");
-logger.debug(JSON.stringify(argv));
+logger.debug("Provided command-line arguments: " + JSON.stringify(argv));
 
-if (port === undefined) {
-  port = defaultPort;
-  logger.info("No port argument provided, using the default of " + defaultPort + ".");
-}
-
-if (timeout === undefined) {
-  timeout = defaultTimeout;
-  logger.info("No timeout argument provided, using the default of " + defaultTimeout + ".");
-}
+if (port === undefined) port = defaultPort;
+if (timeout === undefined) timeout = defaultTimeout;
 
 let pingState: RequestState = RequestState.IDLE;
 let pingOptions: request.OptionsWithUrl = {
-  url: "/ping",
-  method: "POST",
-  json: true,
-  headers: {
+  "url": "/ping",
+  "method": "POST",
+  "json": true,
+  "headers": {
     "port": port
   }
 };
@@ -55,17 +47,12 @@ let pingOptions: request.OptionsWithUrl = {
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-app.post("/message/incoming", receiveMessage);
+app.post("/message/incoming", (request: express.Request, response: express.Response): void => {
+  receiveMessage(request, response, false);
+});
 
 app.post("/message/new", (request: express.Request, response: express.Response): void => {
-  let message: Message = new Message(request.body.user, request.body.content);
-  try {
-    receiveMessage(message);
-    response.send(message);
-  } catch (e) {
-    logger.error(e.toString());
-    response.send(e.toString());
-  }
+  receiveMessage(request, response, true);
 });
 
 app.get("/message/list", (request: express.Request, response: express.Response): void => {
@@ -84,7 +71,7 @@ app.get("/", (request: express.Request, response: express.Response): void => {
 });
 
 app.listen(port, (): void => {
-  logger.info("Server listening on http://" + ipAddress + ":" + port);
+  logger.info("Server listening on http://" + ipAddress + ":" + port + " with a threading timer of " + timeout + " ms.");
   if (servers !== undefined) addAll(servers);
 });
 
@@ -92,14 +79,14 @@ setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
 
 function messageAlive(options: request.OptionsWithUrl, state?: RequestState, onError?: (error: any, response: request.RequestResponse, body: any) => void): void {
   if (state !== undefined && state !== RequestState.IDLE) {
-    logger.warn("requestAlive called with a state that's not IDLE, returning...");
+    logger.warn("messageAlive called with a state that's not IDLE, returning...");
     return;
   }
   if (aliveServers === undefined || aliveServers.size === 0) {
     logger.debug("No known alive servers, returning...");
     return;
   }
-  logger.debug("Starting requestAlive process...");
+  logger.debug("Starting messageAlive process...");
   printAliveServers();
   if (state !== undefined) state = RequestState.INIT;
   let params = {
@@ -145,13 +132,40 @@ function doRequest(options: request.OptionsWithUrl, servers: string[], state?: R
   }, threads, false);
 }
 
-function receiveMessage(message: Message): void {
-  if (message.isValid()) {
-    logger.debug("Received message: " + message);
-    messages.push(message);
-  } else {
-    throw new TypeError("Invalid message: " + message);
+function receiveMessage(request: express.Request, response: express.Response, shouldSpread: boolean): void {
+  try {
+    let message: Message = doReceive(request);
+    if (shouldSpread) spreadNewMessage(message);
+    response.send(true);
+  } catch (e) {
+    logger.error(e.toString());
+    response.send(false);
   }
+}
+
+function doReceive(request: express.Request): Message {
+  let message: Message = parseMessage(request);
+  logger.debug("Received message: " + message);
+  messages.push(message);
+  return message;
+}
+
+function parseMessage(request: express.Request): Message {
+  return new Message(request.body.user, request.body.content);
+}
+
+function spreadNewMessage(message: Message): void {
+  logger.debug("Preparing to spread message...");
+  let messageOptions: request.OptionsWithUrl = {
+    "url": "/message/incoming",
+    "method": "POST",
+    "json": true,
+    "headers": {
+      "port": port
+    },
+    "body": message
+  };
+  messageAlive(messageOptions);
 }
 
 function removeFromAlive(error: any, response: request.RequestResponse, body: any): void {

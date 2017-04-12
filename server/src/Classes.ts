@@ -6,16 +6,14 @@ export class Message extends Stringified {
 
   constructor(user: string, content: string) {
     super();
+    if (!this.isValid(user)) throw new TypeError("user is undefined, null or empty");
+    if (!this.isValid(content)) throw new TypeError("content is undefined, null or empty");
     this.user = user;
     this.content = content;
   }
 
-  isValid(): boolean {
-    return this.isValidField(this.user) && this.isValidField(this.content);
-  }
-
-  private isValidField(field: string): boolean {
-    return typeof field !== "undefined" && field !== null && field.length > 0;
+  private isValid(field: string): boolean {
+    return field !== undefined && field.length > 0;
   }
 }
 
