@@ -8,6 +8,10 @@ import * as minimist from "minimist";
 import * as hamsters from "hamsters.js";
 import * as bodyParser from "body-parser";
 
+hamsters.init({
+  maxThreads: 2
+});
+
 const threads: number = 1;
 const defaultPort: number = 1975;
 const defaultTimeout: number = 10000;
@@ -62,7 +66,9 @@ app.get("/message/list", (request: express.Request, response: express.Response):
 app.post("/ping", (request: express.Request, response: express.Response): void => {
   let address = "http://" + request.hostname + ":" + request.header("port");
   logger.debug("Received ping from '" + address + "'. Adding it to known alive servers...");
+  let size = aliveServers.size;
   aliveServers.add(address);
+  if (size === aliveServers.size) logger.debug("Server was already known!");
   response.send();
 });
 
@@ -106,17 +112,15 @@ function messageAlive(options: request.OptionsWithUrl,
 }
 
 /**
- * @todo rename onError and onSuccess callbacks to something that relates to an
- * error on a single iteration of the loop
  * @todo add another callback that will be called at the end of the thread run
  * (before going back to IDLE state)
  */
 function doRequest(options: request.OptionsWithUrl,
   servers: string[],
-  state?: RequestState,
-  onError?: (error: any, response: request.RequestResponse, body: any) => boolean,
-  onSuccess?: (error: any, response: request.RequestResponse, body: any) => boolean): void {
-  if (state !== undefined && state === RequestState.BUSY) {
+  requestState?: RequestState,
+  onIterErr?: (error: any, response: request.RequestResponse, body: any) => boolean,
+  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => boolean): void {
+  if (requestState !== undefined && requestState === RequestState.BUSY) {
     logger.warn("doRequest called with a BUSY state, returning...");
     return;
   }
@@ -125,28 +129,27 @@ function doRequest(options: request.OptionsWithUrl,
     return;
   }
   logger.debug("Starting doRequest process...");
-  if (state !== undefined) state = RequestState.BUSY;
+  if (requestState !== undefined) requestState = RequestState.BUSY;
   let params = {
     "servers": servers
   };
   hamsters.run(params, (): void => {
-    let advance: boolean = true;
     let servers: string[] = params.servers;
-    for (let i = 0; advance && i < servers.length; i++) {
+    for (let i = 0; i < servers.length; i++) {
       options.baseUrl = servers[i];
       logger.debug("Sending request with options: " + JSON.stringify(options));
       request(options, (error: any, response: request.RequestResponse, body: any) => {
         if (error !== null || response.statusCode !== 200) {
           logger.error(error);
           if (response !== undefined) logger.error(JSON.stringify(response));
-          if (onError !== undefined) advance = onError.call(onError, error, response, body);
-        } else if (onSuccess !== undefined) {
-          advance = onSuccess.call(onSuccess, error, response, body);
+          if (onIterErr !== undefined) onIterErr.call(onIterErr, error, response, body);
+        } else if (onIterSuccess !== undefined) {
+          onIterSuccess.call(onIterSuccess, error, response, body);
         }
       });
     }
   }, (output: any): void => {
-    if (state !== undefined) state = RequestState.IDLE;
+    if (requestState !== undefined) requestState = RequestState.IDLE;
     logger.debug("Stopping doRequest process...");
   }, threads, false);
 }
