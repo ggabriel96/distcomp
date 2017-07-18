@@ -76,23 +76,36 @@ app.post("/ping", (request: express.Request, response: express.Response): void =
 app.get("/", (request: express.Request, response: express.Response): void => {
   response.send("Hello, world!");
 });
+app.get("/xyz", (request: express.Request, response: express.Response): void => {
+  response.send(true);
+});
 
 app.listen(port, (): void => {
   logger.info("Server listening on http://" + ipAddress + ":" + port + " with a threading timer of " + timeout + " ms.");
   if (servers !== undefined) {
     addAll(servers);
-    syncMessages();
+    let options: request.OptionsWithUrl = {
+      "url": "/xyz",
+      "method": "GET",
+      "json": true,
+      "headers": {
+        "port": port
+      }
+    };
+    messageAlive(options, true, RequestState.IDLE, xyz);
+    // syncMessages();
   }
 });
 
-setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
+// setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
 
 function messageAlive(options: request.OptionsWithUrl,
-  state?: RequestState,
-  onIterError?: (error: any, response: request.RequestResponse, body: any) => void,
-  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void): void {
-  if (state !== undefined && state !== RequestState.IDLE) {
-    logger.warn("messageAlive called with a state that's not IDLE, returning...");
+  stopOnFirstSuccess: boolean,
+  requestState: RequestState,
+  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void,
+  onIterError?: (error: any, response: request.RequestResponse, body: any) => void): void {
+  if (requestState !== undefined && requestState !== RequestState.IDLE) {
+    logger.warn("messageAlive called with a RequestState that's not IDLE, returning...");
     return;
   }
   if (aliveServers === undefined || aliveServers.size === 0) {
@@ -100,7 +113,7 @@ function messageAlive(options: request.OptionsWithUrl,
     return;
   }
   logger.debug("Starting messageAlive process...");
-  if (state !== undefined) state = RequestState.INIT;
+  if (requestState !== undefined) requestState = RequestState.INIT;
   let params = {
     "servers": aliveServers
   };
@@ -108,8 +121,27 @@ function messageAlive(options: request.OptionsWithUrl,
     rtn.data = Array.from(params.servers);
     logger.debug("Current known alive servers: " + rtn.data);
   }, (output: any): void => {
-    doRequest(options, output[0], state, onIterError, onIterSuccess);
+    if (stopOnFirstSuccess) doWaitingRequest(options, output[0], 0, requestState, onIterSuccess);
+    else doRequest(options, output[0], requestState, onIterSuccess, onIterError);
   }, threads, false);
+}
+
+function doWaitingRequest(options: request.OptionsWithUrl,
+  servers: string[],
+  index: number,
+  requestState: RequestState,
+  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void): void {
+  if (index < servers.length) {
+    doRequest(options, [servers[index]], requestState,
+      (error: any, response: request.RequestResponse, body: any): void => {
+        if (onIterSuccess !== undefined)
+          onIterSuccess.call(onIterSuccess, error, response, body);
+      },
+      (error: any, response: request.RequestResponse, body: any): void => {
+        logger.debug("doWaitingRequest failed, trying again with index " + (index + 1) + "...");
+        doWaitingRequest(options, servers, index + 1, requestState);
+      });
+  }
 }
 
 /**
@@ -118,9 +150,9 @@ function messageAlive(options: request.OptionsWithUrl,
  */
 function doRequest(options: request.OptionsWithUrl,
   servers: string[],
-  requestState?: RequestState,
-  onIterErr?: (error: any, response: request.RequestResponse, body: any) => void,
-  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void): void {
+  requestState: RequestState,
+  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void,
+  onIterErr?: (error: any, response: request.RequestResponse, body: any) => void): void {
   if (requestState !== undefined && requestState === RequestState.BUSY) {
     logger.warn("doRequest called with a BUSY state, returning...");
     return;
@@ -185,7 +217,7 @@ function spreadNewMessage(message: Message): void {
     },
     "body": message
   };
-  messageAlive(messageOptions);
+  messageAlive(messageOptions, false, RequestState.IDLE);
 }
 
 function removeFromAlive(error: any, response: request.RequestResponse, body: any): boolean {
@@ -253,20 +285,6 @@ function syncMessages(): void {
   });
 }
 
-function xyz(i): void {
-  let syncOptions: request.OptionsWithUrl = {
-    "url": "/xyz",
-    "method": "GET",
-    "json": true,
-    "headers": {
-      "port": port
-    }
-  };
-  doRequest(syncOptions, [Array.from(aliveServers)[i]], undefined, (error: any, response: request.RequestResponse, body: any): void => {
-    console.log("error " + i);
-    if (i + 1 < servers.length)
-      xyz(i + 1);
-  }, (error: any, response: request.RequestResponse, body: any): void => {
-    console.log("success");
-  });
+function xyz(): void {
+  console.log("success");
 }
