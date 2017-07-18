@@ -252,3 +252,21 @@ function syncMessages(): void {
     return false;
   });
 }
+
+function xyz(i): void {
+  let syncOptions: request.OptionsWithUrl = {
+    "url": "/xyz",
+    "method": "GET",
+    "json": true,
+    "headers": {
+      "port": port
+    }
+  };
+  doRequest(syncOptions, [Array.from(aliveServers)[i]], undefined, (error: any, response: request.RequestResponse, body: any): void => {
+    console.log("error " + i);
+    if (i + 1 < servers.length)
+      xyz(i + 1);
+  }, (error: any, response: request.RequestResponse, body: any): void => {
+    console.log("success");
+  });
+}
