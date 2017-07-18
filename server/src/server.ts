@@ -70,10 +70,11 @@ app.get("/message/list", (request: express.Request, response: express.Response):
 
 app.post("/ping", (request: express.Request, response: express.Response): void => {
   let address = "http://" + request.hostname + ":" + request.header("port");
-  logger.debug("Received ping from '" + address + "'. Adding it to known alive servers...");
-  let size = aliveServers.size;
-  aliveServers.add(address);
-  if (size === aliveServers.size) logger.debug("Server was already known!");
+  logger.debug("Received ping from '" + address);
+  if (!aliveServers.has(address)) {
+    logger.debug("Adding it to known alive servers...");
+    aliveServers.add(address);
+  }
   response.send();
 });
 
