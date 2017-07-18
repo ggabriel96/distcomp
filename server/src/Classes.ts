@@ -13,7 +13,7 @@ export class Message extends Stringified {
     if (!this.isValid(content)) throw new TypeError("content is undefined, null or empty");
     this.user = user;
     this.content = content;
-    this.stamp = new Stamp(IDs.zero(), stamp.occurrence);
+    this.stamp = stamp;
   }
 
   private isValid(field: string): boolean {

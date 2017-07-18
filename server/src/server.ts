@@ -1,6 +1,8 @@
 import { Message, RequestState } from "./Classes";
 
 import * as ip from "ip";
+import { IDs } from "itclocks";
+import { Occurrences } from "itclocks";
 import { Stamp } from "itclocks";
 import * as express from "express";
 import * as winston from "winston";
@@ -169,8 +171,8 @@ function receiveClientMessage(request: express.Request, response: express.Respon
 }
 
 function receiveMessage(json: any): Message {
-  let message: Message = new Message(json.user, json.content, json.stamp || stamp);
-  stamp = stamp.receive(message.stamp);
+  stamp = stamp.receive(json.stamp === undefined ? new Stamp(IDs.zero(), stamp.event().occurrence) : Stamp.fromString(json.stamp));
+  let message: Message = new Message(json.user, json.content, stamp);
   logger.debug("Received message: " + message);
   messages.push(message);
   return message;
