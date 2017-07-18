@@ -1,13 +1,11 @@
 import { Message, RequestState } from "./Classes";
 
 import * as ip from "ip";
-import { IDs } from "itclocks";
-import { Occurrences } from "itclocks";
-import { Stamp } from "itclocks";
 import * as express from "express";
 import * as winston from "winston";
 import * as request from "request";
 import * as minimist from "minimist";
+import { IDs, Stamp } from "itclocks";
 import * as hamsters from "hamsters.js";
 import * as bodyParser from "body-parser";
 import SortedSet = require("collections/sorted-set");
@@ -30,18 +28,15 @@ const logger: winston.LoggerInstance = new winston.Logger({
   ]
 });
 
-let messages: SortedSet<Message> = new SortedSet<Message>(null, Message.equals, Message.compare);
-let aliveServers: Set<string> = new Set();
+const port: number | undefined = argv.port || argv.p || defaultPort;
+const timeout: number | undefined = argv.timeout || argv.t || defaultTimeout;
 
 let stamp: Stamp = new Stamp();
-let port: number | undefined = argv.port || argv.p;
-let timeout: number | undefined = argv.timeout || argv.t;
+let aliveServers: Set<string> = new Set();
 let servers: string | string[] | undefined = argv.server || argv.s;
+let messages: SortedSet<Message> = new SortedSet<Message>(null, Message.equals, Message.compare);
 
 logger.debug("Provided command-line arguments: " + JSON.stringify(argv));
-
-if (port === undefined) port = defaultPort;
-if (timeout === undefined) timeout = defaultTimeout;
 
 let pingState: RequestState = RequestState.IDLE;
 let pingOptions: request.OptionsWithUrl = {
@@ -94,8 +89,8 @@ setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
 
 function messageAlive(options: request.OptionsWithUrl,
   state?: RequestState,
-  onError?: (error: any, response: request.RequestResponse, body: any) => boolean,
-  onSuccess?: (error: any, response: request.RequestResponse, body: any) => boolean): void {
+  onIterError?: (error: any, response: request.RequestResponse, body: any) => void,
+  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void): void {
   if (state !== undefined && state !== RequestState.IDLE) {
     logger.warn("messageAlive called with a state that's not IDLE, returning...");
     return;
@@ -113,7 +108,7 @@ function messageAlive(options: request.OptionsWithUrl,
     rtn.data = Array.from(params.servers);
     logger.debug("Current known alive servers: " + rtn.data);
   }, (output: any): void => {
-    doRequest(options, output[0], state, onError, onSuccess);
+    doRequest(options, output[0], state, onIterError, onIterSuccess);
   }, threads, false);
 }
 
@@ -124,8 +119,8 @@ function messageAlive(options: request.OptionsWithUrl,
 function doRequest(options: request.OptionsWithUrl,
   servers: string[],
   requestState?: RequestState,
-  onIterErr?: (error: any, response: request.RequestResponse, body: any) => boolean,
-  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => boolean): void {
+  onIterErr?: (error: any, response: request.RequestResponse, body: any) => void,
+  onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void): void {
   if (requestState !== undefined && requestState === RequestState.BUSY) {
     logger.warn("doRequest called with a BUSY state, returning...");
     return;
