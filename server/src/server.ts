@@ -1,12 +1,14 @@
 import { Message, RequestState } from "./Classes";
 
 import * as ip from "ip";
+import { Stamp } from "itclocks";
 import * as express from "express";
 import * as winston from "winston";
 import * as request from "request";
 import * as minimist from "minimist";
 import * as hamsters from "hamsters.js";
 import * as bodyParser from "body-parser";
+import SortedSet = require("collections/sorted-set");
 
 hamsters.init({
   maxThreads: 2
@@ -26,9 +28,10 @@ const logger: winston.LoggerInstance = new winston.Logger({
   ]
 });
 
-let messages: Message[] = [];
+let messages: SortedSet<Message> = new SortedSet<Message>(null, Message.equals, Message.compare);
 let aliveServers: Set<string> = new Set();
 
+let stamp: Stamp = new Stamp();
 let port: number | undefined = argv.port || argv.p;
 let timeout: number | undefined = argv.timeout || argv.t;
 let servers: string | string[] | undefined = argv.server || argv.s;
@@ -166,7 +169,8 @@ function receiveClientMessage(request: express.Request, response: express.Respon
 }
 
 function receiveMessage(json: any): Message {
-  let message: Message = new Message(json.user, json.content);
+  let message: Message = new Message(json.user, json.content, json.stamp || stamp);
+  stamp = stamp.receive(message.stamp);
   logger.debug("Received message: " + message);
   messages.push(message);
   return message;

@@ -17,15 +17,18 @@
   "homepage": "https://github.com/ggabriel96/distcomp#readme",
   "dependencies": {
     "body-parser": "^1.17.1",
+    "collections": "^5.0.6",
     "express": "^4.15.2",
     "hamsters.js": "^4.0.0",
     "ip": "^1.1.5",
+    "itclocks": "^1.0.0-rc.3",
     "minimist": "^1.2.0",
     "request": "^2.81.0",
     "winston": "^2.3.1"
   },
   "devDependencies": {
     "@types/body-parser": "^1.16.1",
+    "@types/collections": "^5.0.0",
     "@types/express": "^4.0.35",
     "@types/ip": "0.0.29",
     "@types/minimist": "^1.2.0",
