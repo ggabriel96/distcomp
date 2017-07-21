@@ -38,7 +38,7 @@ let messages: SortedSet<Message> = new SortedSet<Message>(null, Message.equals, 
 
 logger.debug("Provided command-line arguments: " + JSON.stringify(argv));
 
-let pingState: RequestState = RequestState.IDLE;
+let requestState: RequestState = RequestState.IDLE;
 let pingOptions: request.OptionsWithUrl = {
   "url": "/ping",
   "method": "POST",
@@ -73,30 +73,28 @@ app.post("/ping", (request: express.Request, response: express.Response): void =
   response.send();
 });
 
+app.get("/fork", (request: express.Request, response: express.Response): void => {
+  let fork: Stamp[] = stamp.fork();
+  stamp = fork[0];
+  response.send({ "stamp": fork[1].toJSON() });
+});
+
 app.get("/", (request: express.Request, response: express.Response): void => {
   response.send("Hello, world!");
-});
-app.get("/xyz", (request: express.Request, response: express.Response): void => {
-  response.send(true);
 });
 
 app.listen(port, (): void => {
   logger.info("Server listening on http://" + ipAddress + ":" + port + " with a threading timer of " + timeout + " ms.");
   if (servers !== undefined) {
     addAll(servers);
-    let options: request.OptionsWithUrl = {
-      "url": "/xyz",
-      "method": "GET",
-      "json": true,
-      "headers": {
-        "port": port
-      }
-    };
-    messageAlive(options, true, RequestState.IDLE, xyz);
+    requestID();
     // syncMessages();
   }
 });
 
+setInterval(() => {
+  logger.debug(stamp.toJSON());
+}, 5000);
 // setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
 
 function messageAlive(options: request.OptionsWithUrl,
@@ -199,7 +197,7 @@ function receiveClientMessage(request: express.Request, response: express.Respon
 }
 
 function receiveMessage(json: any): Message {
-  stamp = stamp.receive(json.stamp === undefined ? new Stamp(IDs.zero(), stamp.event().occurrence) : Stamp.fromString(json.stamp));
+  stamp = stamp.receive(json.stamp === undefined ? new Stamp(IDs.zero(), stamp.occurrence) : Stamp.fromString(json.stamp.id, json.stamp.occurrence));
   let message: Message = new Message(json.user, json.content, stamp);
   logger.debug("Received message: " + message);
   messages.push(message);
@@ -259,6 +257,20 @@ function addAll(servers: string | string[]): void {
   }
 }
 
+function requestID(): void {
+  let options: request.OptionsWithUrl = {
+    "url": "/fork",
+    "method": "GET",
+    "json": true,
+    "headers": {
+      "port": port
+    }
+  };
+  messageAlive(options, true, requestState, (error: any, response: request.RequestResponse, body: any): void => {
+    stamp = Stamp.fromString(body.stamp.id, body.stamp.occurrence);
+  });
+}
+
 function syncMessages(): void {
   logger.debug("Preparing to sync messages...");
   let syncOptions: request.OptionsWithUrl = {
@@ -269,22 +281,12 @@ function syncMessages(): void {
       "port": port
     }
   };
-  messageAlive(syncOptions, undefined, undefined, (error: any, response: request.RequestResponse, body: any): boolean => {
+  messageAlive(syncOptions, true, requestState, (error: any, response: request.RequestResponse, body: any): void => {
     try {
       for (let i = 0; i < body.length; i++) receiveMessage(body[i]);
     } catch (e) {
-      /**
-       * Does not make a lot of sense now, but it's a "try again" placeholder.
-       * An error should never happen here, because servers only hold valid
-       * messages, but it's preferable to have it not crash anyways...
-       */
       logger.error(e.toString());
-      return true;
     }
-    return false;
   });
 }
 
-function xyz(): void {
-  console.log("success");
-}
