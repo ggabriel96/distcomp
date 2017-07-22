@@ -5,9 +5,9 @@ import * as express from "express";
 import * as winston from "winston";
 import * as request from "request";
 import * as minimist from "minimist";
-import { IDs, Stamp } from "itclocks";
 import * as hamsters from "hamsters.js";
 import * as bodyParser from "body-parser";
+import { IDs, Occurrences, Stamp } from "itclocks";
 import SortedSet = require("collections/sorted-set");
 
 hamsters.init({
@@ -28,8 +28,8 @@ const logger: winston.LoggerInstance = new winston.Logger({
   ]
 });
 
-const port: number | undefined = argv.port || argv.p || defaultPort;
-const timeout: number | undefined = argv.timeout || argv.t || defaultTimeout;
+const port: number = argv.port || argv.p || defaultPort;
+const timeout: number = argv.timeout || argv.t || defaultTimeout;
 
 let stamp: Stamp = new Stamp();
 let aliveServers: Set<string> = new Set();
@@ -51,12 +51,18 @@ let pingOptions: request.OptionsWithUrl = {
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-app.post("/message/incoming", (request: express.Request, response: express.Response): void => {
-  receiveClientMessage(request, response, false);
-});
-
-app.post("/message/new", (request: express.Request, response: express.Response): void => {
-  receiveClientMessage(request, response, true);
+app.post("/message/new/from/:origin", (request: express.Request, response: express.Response): void => {
+  try {
+    let message: Message = receiveMessage(request.body);
+    logger.info("New message from " + request.params.origin);
+    logger.verbose("Message is: " + message);
+    logger.info("New stamp: " + stamp.toString());
+    if (request.params.origin === "client") spreadNewMessage(message);
+    response.send(true);
+  } catch (e) {
+    logger.error(e.toString());
+    response.send(false);
+  }
 });
 
 app.get("/message/list", (request: express.Request, response: express.Response): void => {
@@ -65,18 +71,22 @@ app.get("/message/list", (request: express.Request, response: express.Response):
 
 app.post("/ping", (request: express.Request, response: express.Response): void => {
   let address = "http://" + request.hostname + ":" + request.header("port");
-  logger.debug("Received ping from '" + address);
-  if (!aliveServers.has(address)) {
-    logger.debug("Adding it to known alive servers...");
-    aliveServers.add(address);
-  }
+  logger.verbose("Received ping from '" + address);
+  if (addServer(address)) logger.verbose("Adding it to known alive servers...");
   response.send();
 });
 
 app.get("/fork", (request: express.Request, response: express.Response): void => {
+  let address = "http://" + request.hostname + ":" + request.header("port");
+  logger.info("Received fork request from '" + address);
+  if (addServer(address)) logger.verbose("Adding it to known alive servers...");
   let fork: Stamp[] = stamp.fork();
   stamp = fork[0];
-  response.send({ "stamp": fork[1].toJSON() });
+  logger.info("New stamp: " + stamp.toString());
+  response.send({
+    "stamp": fork[1].toJSON(),
+    "messages": messages
+  });
 });
 
 app.get("/", (request: express.Request, response: express.Response): void => {
@@ -87,14 +97,10 @@ app.listen(port, (): void => {
   logger.info("Server listening on http://" + ipAddress + ":" + port + " with a threading timer of " + timeout + " ms.");
   if (servers !== undefined) {
     addAll(servers);
-    requestID();
-    // syncMessages();
+    requestFork();
   }
 });
 
-setInterval(() => {
-  logger.debug(stamp.toJSON());
-}, 5000);
 // setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
 
 function messageAlive(options: request.OptionsWithUrl,
@@ -185,21 +191,30 @@ function doRequest(options: request.OptionsWithUrl,
   }, threads, false);
 }
 
-function receiveClientMessage(request: express.Request, response: express.Response, shouldSpread: boolean): void {
-  try {
-    let message: Message = receiveMessage(request.body);
-    if (shouldSpread) spreadNewMessage(message);
-    response.send(true);
-  } catch (e) {
-    logger.error(e.toString());
-    response.send(false);
+function addServer(address: string): boolean {
+  if (!aliveServers.has(address)) {
+    aliveServers.add(address);
+    return true;
   }
+  return false
 }
 
 function receiveMessage(json: any): Message {
-  stamp = stamp.receive(json.stamp === undefined ? new Stamp(IDs.zero(), stamp.occurrence) : Stamp.fromString(json.stamp.id, json.stamp.occurrence));
-  let message: Message = new Message(json.user, json.content, stamp);
-  logger.debug("Received message: " + message);
+  let messageStamp: Stamp;
+  if (json.stamp === undefined) {
+    messageStamp = new Stamp(IDs.zero(), stamp.event().occurrence);
+    logger.verbose("Received a message without a stamp; message stamp is: " + messageStamp.toString());
+  } else {
+    messageStamp = new Stamp(IDs.zero(), Occurrences.fromString(json.stamp.occurrence));
+    logger.verbose("Received a message with stamp: " + messageStamp.toString());
+  }
+  // stamp = stamp.receive(messageStamp);
+  // Does not invoke receive() because that would
+  // increment the current occurrence again and
+  // this doesn't seem right. Joining the occurrences
+  // is just the first step of receive().
+  stamp = new Stamp(stamp.id, stamp.occurrence.join(messageStamp.occurrence));
+  let message: Message = new Message(json.user, json.content, messageStamp);
   messages.push(message);
   return message;
 }
@@ -207,7 +222,7 @@ function receiveMessage(json: any): Message {
 function spreadNewMessage(message: Message): void {
   logger.debug("Preparing to spread message...");
   let messageOptions: request.OptionsWithUrl = {
-    "url": "/message/incoming",
+    "url": "/message/new/from/server",
     "method": "POST",
     "json": true,
     "headers": {
@@ -257,7 +272,7 @@ function addAll(servers: string | string[]): void {
   }
 }
 
-function requestID(): void {
+function requestFork(): void {
   let options: request.OptionsWithUrl = {
     "url": "/fork",
     "method": "GET",
@@ -267,26 +282,13 @@ function requestID(): void {
     }
   };
   messageAlive(options, true, requestState, (error: any, response: request.RequestResponse, body: any): void => {
+    logger.info("Fork request succeeded.");
     stamp = Stamp.fromString(body.stamp.id, body.stamp.occurrence);
-  });
-}
-
-function syncMessages(): void {
-  logger.debug("Preparing to sync messages...");
-  let syncOptions: request.OptionsWithUrl = {
-    "url": "/message/list",
-    "method": "GET",
-    "json": true,
-    "headers": {
-      "port": port
-    }
-  };
-  messageAlive(syncOptions, true, requestState, (error: any, response: request.RequestResponse, body: any): void => {
+    logger.info("New stamp: " + stamp.toString());
     try {
-      for (let i = 0; i < body.length; i++) receiveMessage(body[i]);
+      for (let message of body.messages) receiveMessage(message);
     } catch (e) {
       logger.error(e.toString());
     }
   });
 }
-

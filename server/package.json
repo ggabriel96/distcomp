@@ -21,7 +21,7 @@
     "express": "^4.15.2",
     "hamsters.js": "^4.0.0",
     "ip": "^1.1.5",
-    "itclocks": "^1.0.0-rc.5",
+    "itclocks": "^1.0.0-rc.6",
     "minimist": "^1.2.0",
     "request": "^2.81.0",
     "winston": "^2.3.1"
