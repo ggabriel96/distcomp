@@ -101,14 +101,13 @@ app.listen(port, (): void => {
   }
 });
 
-// setInterval(messageAlive, timeout, pingOptions, pingState, removeFromAlive);
+setInterval(messageAlive, timeout, pingOptions, false, undefined, removeFromAlive);
 
 function messageAlive(options: request.OptionsWithUrl,
   stopOnFirstSuccess: boolean,
-  requestState: RequestState,
   onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void,
   onIterError?: (error: any, response: request.RequestResponse, body: any) => void): void {
-  if (requestState !== undefined && requestState !== RequestState.IDLE) {
+  if (requestState as RequestState !== RequestState.IDLE) {
     logger.warn("messageAlive called with a RequestState that's not IDLE, returning...");
     return;
   }
@@ -117,7 +116,7 @@ function messageAlive(options: request.OptionsWithUrl,
     return;
   }
   logger.debug("Starting messageAlive process...");
-  if (requestState !== undefined) requestState = RequestState.INIT;
+  requestState = RequestState.INIT;
   let params = {
     "servers": aliveServers
   };
@@ -125,27 +124,27 @@ function messageAlive(options: request.OptionsWithUrl,
     rtn.data = Array.from(params.servers);
     logger.debug("Current known alive servers: " + rtn.data);
   }, (output: any): void => {
-    if (stopOnFirstSuccess) doWaitingRequest(options, output[0], 0, requestState, onIterSuccess);
-    else doRequest(options, output[0], requestState, onIterSuccess, onIterError);
+    if (stopOnFirstSuccess) doWaitingRequest(options, output[0], 0, onIterSuccess);
+    else doRequest(options, output[0], onIterSuccess, onIterError);
   }, threads, false);
 }
 
 function doWaitingRequest(options: request.OptionsWithUrl,
   servers: string[],
   index: number,
-  requestState: RequestState,
   onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void): void {
+  requestState = RequestState.BUSY;
   if (index < servers.length) {
-    doRequest(options, [servers[index]], requestState,
+    doRequest(options, [servers[index]],
       (error: any, response: request.RequestResponse, body: any): void => {
-        if (onIterSuccess !== undefined)
-          onIterSuccess.call(onIterSuccess, error, response, body);
+        requestState = RequestState.IDLE;
+        if (onIterSuccess !== undefined) onIterSuccess.call(onIterSuccess, error, response, body);
       },
       (error: any, response: request.RequestResponse, body: any): void => {
         logger.debug("doWaitingRequest failed, trying again with index " + (index + 1) + "...");
-        doWaitingRequest(options, servers, index + 1, requestState);
+        doWaitingRequest(options, servers, index + 1);
       });
-  }
+  } else if (index === servers.length && requestState !== undefined) requestState = RequestState.IDLE;
 }
 
 /**
@@ -154,19 +153,14 @@ function doWaitingRequest(options: request.OptionsWithUrl,
  */
 function doRequest(options: request.OptionsWithUrl,
   servers: string[],
-  requestState: RequestState,
   onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void,
   onIterErr?: (error: any, response: request.RequestResponse, body: any) => void): void {
-  if (requestState !== undefined && requestState === RequestState.BUSY) {
-    logger.warn("doRequest called with a BUSY state, returning...");
-    return;
-  }
   if (servers === undefined || servers.length === 0) {
     logger.warn("doRequest called with undefined or empty servers array, returning...");
     return;
   }
   logger.debug("Starting doRequest process...");
-  if (requestState !== undefined) requestState = RequestState.BUSY;
+  requestState = RequestState.BUSY;
   let params = {
     "servers": servers
   };
@@ -186,7 +180,7 @@ function doRequest(options: request.OptionsWithUrl,
       });
     }
   }, (output: any): void => {
-    if (requestState !== undefined) requestState = RequestState.IDLE;
+    requestState = RequestState.IDLE;
     logger.debug("Stopping doRequest process...");
   }, threads, false);
 }
@@ -230,14 +224,13 @@ function spreadNewMessage(message: Message): void {
     },
     "body": message
   };
-  messageAlive(messageOptions, false, RequestState.IDLE);
+  messageAlive(messageOptions, false);
 }
 
-function removeFromAlive(error: any, response: request.RequestResponse, body: any): boolean {
+function removeFromAlive(error: any, response: request.RequestResponse, body: any): void {
   let server: string = "http://" + error.address + ":" + error.port;
-  logger.error("Removing '" + server + "' from known alive servers...");
+  logger.info("Removing '" + server + "' from known alive servers...");
   aliveServers.delete(server);
-  return true;
 }
 
 function fixAddresses(servers: string[]): string[] {
@@ -281,7 +274,7 @@ function requestFork(): void {
       "port": port
     }
   };
-  messageAlive(options, true, requestState, (error: any, response: request.RequestResponse, body: any): void => {
+  messageAlive(options, true, (error: any, response: request.RequestResponse, body: any): void => {
     logger.info("Fork request succeeded.");
     stamp = Stamp.fromString(body.stamp.id, body.stamp.occurrence);
     logger.info("New stamp: " + stamp.toString());
