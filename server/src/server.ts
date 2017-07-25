@@ -54,9 +54,9 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.post("/message/new/from/:origin", (request: express.Request, response: express.Response): void => {
   try {
     let message: Message = receiveMessage(request.body);
-    logger.info("New message from " + request.params.origin);
+    logger.verbose("New message from " + request.params.origin);
     logger.verbose("Message is: " + message);
-    logger.info("New stamp: " + stamp.toString());
+    logger.verbose("New stamp: " + stamp.toString());
     if (request.params.origin === "client") spreadNewMessage(message);
     response.send(true);
   } catch (e) {
@@ -78,8 +78,8 @@ app.post("/ping", (request: express.Request, response: express.Response): void =
 
 app.get("/fork", (request: express.Request, response: express.Response): void => {
   let address = "http://" + request.hostname + ":" + request.header("port");
-  logger.info("Received fork request from '" + address);
-  if (addServer(address)) logger.verbose("Adding it to known alive servers...");
+  logger.info("Received fork request from " + address);
+  if (addServer(address)) logger.verbose("Added to known alive servers.");
   let fork: Stamp[] = stamp.fork();
   stamp = fork[0];
   logger.info("New stamp: " + stamp.toString());
@@ -144,7 +144,7 @@ function doWaitingRequest(options: request.OptionsWithUrl,
         logger.debug("doWaitingRequest failed, trying again with index " + (index + 1) + "...");
         doWaitingRequest(options, servers, index + 1);
       });
-  } else if (index === servers.length && requestState !== undefined) requestState = RequestState.IDLE;
+  } else if (index === servers.length) requestState = RequestState.IDLE;
 }
 
 /**
@@ -155,10 +155,6 @@ function doRequest(options: request.OptionsWithUrl,
   servers: string[],
   onIterSuccess?: (error: any, response: request.RequestResponse, body: any) => void,
   onIterErr?: (error: any, response: request.RequestResponse, body: any) => void): void {
-  if (servers === undefined || servers.length === 0) {
-    logger.warn("doRequest called with undefined or empty servers array, returning...");
-    return;
-  }
   logger.debug("Starting doRequest process...");
   requestState = RequestState.BUSY;
   let params = {
@@ -195,10 +191,12 @@ function addServer(address: string): boolean {
 
 function receiveMessage(json: any): Message {
   let messageStamp: Stamp;
+  // Message from a client
   if (json.stamp === undefined) {
     messageStamp = new Stamp(IDs.zero(), stamp.event().occurrence);
     logger.verbose("Received a message without a stamp; message stamp is: " + messageStamp.toString());
   } else {
+    // Message from another server
     messageStamp = new Stamp(IDs.zero(), Occurrences.fromString(json.stamp.occurrence));
     logger.verbose("Received a message with stamp: " + messageStamp.toString());
   }
@@ -206,7 +204,8 @@ function receiveMessage(json: any): Message {
   // Does not invoke receive() because that would
   // increment the current occurrence again and
   // this doesn't seem right. Joining the occurrences
-  // is just the first step of receive().
+  // is just the first step of receive(), whereas
+  // event() is the second one.
   stamp = new Stamp(stamp.id, stamp.occurrence.join(messageStamp.occurrence));
   let message: Message = new Message(json.user, json.content, messageStamp);
   messages.push(message);
