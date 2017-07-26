@@ -39,11 +39,12 @@ let messages: SortedSet<Message> = new SortedSet<Message>(null, Message.equals, 
 logger.debug("Provided command-line arguments: " + JSON.stringify(argv));
 
 let requestState: RequestState = RequestState.IDLE;
-let pingOptions: request.OptionsWithUrl = {
+const pingOptions: request.OptionsWithUrl = {
   "url": "/ping",
   "method": "POST",
   "json": true,
-  "headers": {
+  "body": {
+    "ip": ipAddress,
     "port": port
   }
 };
@@ -70,16 +71,15 @@ app.get("/message/list", (request: express.Request, response: express.Response):
 });
 
 app.post("/ping", (request: express.Request, response: express.Response): void => {
-  let address = "http://" + request.hostname + ":" + request.header("port");
+  let address = "http://" + request.body.ip + ":" + request.body.port;
   logger.verbose("Received ping from '" + address);
   if (addServer(address)) logger.verbose("Adding it to known alive servers...");
   response.send();
 });
 
 app.get("/fork", (request: express.Request, response: express.Response): void => {
-  let address = "http://" + request.hostname + ":" + request.header("port");
+  let address = "http://" + request.body.ip + ":" + request.body.port;
   logger.info("Received fork request from " + address);
-  if (addServer(address)) logger.verbose("Added to known alive servers.");
   let fork: Stamp[] = stamp.fork();
   stamp = fork[0];
   logger.info("New stamp: " + stamp.toString());
@@ -87,6 +87,17 @@ app.get("/fork", (request: express.Request, response: express.Response): void =>
     "stamp": fork[1].toJSON(),
     "messages": messages
   });
+  let spreadOptions: request.OptionsWithUrl = {
+    "url": "/ping",
+    "method": "POST",
+    "json": true,
+    "body": {
+      "ip": request.body.ip,
+      "port": request.body.port
+    }
+  };
+  logger.info("Preparing to spread server...");
+  messageAlive(spreadOptions, false);
 });
 
 app.get("/", (request: express.Request, response: express.Response): void => {
@@ -269,7 +280,8 @@ function requestFork(): void {
     "url": "/fork",
     "method": "GET",
     "json": true,
-    "headers": {
+    "body": {
+      "ip": ipAddress,
       "port": port
     }
   };
