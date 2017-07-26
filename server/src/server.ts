@@ -72,7 +72,7 @@ app.get("/message/list", (request: express.Request, response: express.Response):
 
 app.post("/ping", (request: express.Request, response: express.Response): void => {
   let address = "http://" + request.body.ip + ":" + request.body.port;
-  logger.verbose("Received ping from '" + address);
+  logger.verbose("Received ping from '" + address + "'");
   if (addServer(address)) logger.verbose("Adding it to known alive servers...");
   response.send();
 });
